@@ -1,0 +1,48 @@
+include:
+  - local: 'terraform-runner/.gitlab-ci.yml'
+
+default:
+  tags:
+    - my-gitlab-runner
+
+before_script:
+  - echo "$SERVICE_ACCOUNT_JSON" | base64 -d > service-account.json
+  - yc config profile create yandex-cloud-cli --token=$YANDEX_CLOUD_API_TOKEN
+  - yc config profile activate yandex-cloud-cli
+
+stages:
+  - build-branch
+  - build_and_tag_image_master
+
+.build-branch:
+  stage: build-branch
+  image: cr.yandex/crprles4pfjpj44kv3fh/terraform-runner:0.0.0
+  script:
+    - >
+      cd $BUILD_DIR;
+      yc container registry configure-docker --registry=$YANDEX_REGISTRY
+      docker build -t $YANDEX_REGISTRY/staging/$IMAGE_NAME:$CI_COMMIT_SHORT_SHA .
+      docker push $YANDEX_REGISTRY/staging/$IMAGE_NAME:$CI_COMMIT_SHORT_SHA
+
+    - >
+      cat all_versions.txt | grep -o "$(cat version.txt)" > version_image.txt || true; 
+      VERSION_IMAGE="$(cat version_image.txt)";
+      if [ -n "$VERSION_IMAGE" ]; then
+        echo "Пожалуйста, обновите version.txt, образ с этим тегом уже существует в Yandex Cloud Registry";
+        exit 1
+      else
+        IMAGE_TAG="$(cat version.txt)"
+        docker build -t $YANDEX_REGISTRY/staging/$IMAGE_NAME:$IMAGE_TAG-$CI_COMMIT_SHORT_SHA .
+        docker push $YANDEX_REGISTRY/staging/$IMAGE_NAME:$IMAGE_TAG-$CI_COMMIT_SHORT_SHA
+      fi
+  allow_failure: false
+
+.build_and_tag_image_master:
+  stage: build_and_tag_image_master
+  image: cr.yandex/crprles4pfjpj44kv3fh/terraform-runner:0.0.0
+  script:
+    - cd $BUILD_DIR
+    - IMAGE_TAG="$(cat version.txt)"
+    yc container registry configure-docker --registry=$YANDEX_REGISTRY
+    docker build -t $YANDEX_REGISTRY/$IMAGE_NAME:$IMAGE_TAG .
+    docker push $YANDEX_REGISTRY/$IMAGE_NAME:$IMAGE_TAG
